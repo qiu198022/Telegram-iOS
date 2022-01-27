@@ -409,7 +409,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         
         let baseAppBundleId = Bundle.main.bundleIdentifier!
         let appGroupName = "group.\(baseAppBundleId)"
-        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
+        var maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
         
         let buildConfig = BuildConfig(baseAppBundleId: baseAppBundleId)
         self.buildConfig = buildConfig
@@ -444,6 +444,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             return data
         }, autolockDeadine: autolockDeadine, encryptionProvider: OpenSSLEncryptionProvider(), resolvedDeviceName: nil)
         
+        if maybeAppGroupUrl == nil {maybeAppGroupUrl = URL(string:NSHomeDirectory() + "/Documents/XXXXXXXXX")}
         guard let appGroupUrl = maybeAppGroupUrl else {
             self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Error 2", preferredStyle: .alert))
             return true
@@ -631,32 +632,9 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                 }
             })
         }, requestSiriAuthorization: { completion in
-            if #available(iOS 10, *) {
-                INPreferences.requestSiriAuthorization { status in
-                    if case .authorized = status {
-                        completion(true)
-                    } else {
-                        completion(false)
-                    }
-                }
-            } else {
                 completion(false)
-            }
         }, siriAuthorization: {
-            if #available(iOS 10, *) {
-                switch INPreferences.siriAuthorizationStatus() {
-                    case .authorized:
-                        return .allowed
-                    case .denied, .restricted:
-                        return .denied
-                    case .notDetermined:
-                        return .notDetermined
-                    @unknown default:
-                        return .notDetermined
-                }
-            } else {
-                return .denied
-            }
+            return .denied
         }, getWindowHost: {
             return self.nativeWindow
         }, presentNativeController: { controller in

